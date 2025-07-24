@@ -17,6 +17,7 @@ from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bs4 import BeautifulSoup
 from cachetools import TTLCache
+from aiogram.exceptions import TelegramForbiddenError
 
 # Настройка логирования
 logging.basicConfig(
@@ -500,21 +501,45 @@ async def on_startup():
     if missing:
         error_msg = f"Отсутствуют переменные окружения: {', '.join(missing)}"
         logging.critical(error_msg)
-        # Попытка сообщить администратору (если хоть API_TOKEN доступен)
-        if 'API_TOKEN' in os.environ:
-            try:
-                await bot.send_message(ADMIN_CHAT_ID, f"🔴 ОШИБКА: {error_msg}")
-            except:
-                pass
         exit(1)
     
     setup_scheduler()
-    await bot.send_message(ADMIN_CHAT_ID, "🟢 Ethereum Tracker Bot запущен и работает!")
+    
+    # Проверка доступности администратора
+    try:
+        me = await bot.get_me()
+        logging.info(f"Бот @{me.username} успешно запущен")
+        
+        # ПРОВЕРКА: Бот может отправлять сообщения администратору?
+        await bot.send_chat_action(ADMIN_CHAT_ID, "typing")
+        logging.info(f"Администратор {ADMIN_CHAT_ID} доступен")
+    except TelegramForbiddenError:
+        logging.warning(f"Бот не может отправить сообщение администратору {ADMIN_CHAT_ID}. "
+                        "Убедитесь, что администратор запустил бота командой /start")
+    except Exception as e:
+        logging.error(f"Ошибка проверки администратора: {e}")
 
 async def on_shutdown():
     logging.info("Stopping scheduler...")
     scheduler.shutdown()
-    await bot.send_message(ADMIN_CHAT_ID, "🔴 Ethereum Tracker Bot остановлен!")
+    try:
+        await bot.send_message(ADMIN_CHAT_ID, "🔴 Ethereum Tracker Bot остановлен!")
+    except TelegramForbiddenError:
+        logging.warning("Не удалось отправить сообщение администратору при остановке")
+    except Exception as e:
+        logging.error(f"Ошибка при остановке: {e}")
+        
+
+@dp.message(Command("ping_admin"))
+async def cmd_ping_admin(message: types.Message):
+    """Проверка доступности администратора"""
+    try:
+        await bot.send_chat_action(ADMIN_CHAT_ID, "typing")
+        await message.answer("✅ Администратор доступен")
+    except TelegramForbiddenError:
+        await message.answer("❌ Ошибка: бот не может связаться с администратором")
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка: {str(e)}")
 
 async def main():
     await on_startup()
